@@ -9,8 +9,9 @@ from dataclasses import dataclass, asdict, field
 
 @dataclass
 class LampGPT2Config(LowPrecGPT2Config):
-    tau_activation: float = 2.0
-    tau_softmax: float = 2.0
+    tau_activation: float = 1.0
+    tau_softmax: float = 1.0
+    relax_lamp: bool = False
     fake_lamp: bool = False
     sparsity_logs: list[float] = field(default_factory=list)
 
@@ -27,25 +28,6 @@ class LampGPT2Config(LowPrecGPT2Config):
         return cls(**params)
 
 # ---------------------------------------------------------------------------------------------------------------------------
-
-def get_lamp_softmax_mask(x, threshold):
-    original_shape = x.shape
-    D = original_shape[-1]
-    flat_x = x.view(-1, D)
-
-    sorted_values, sorted_indices = torch.sort(flat_x, descending=True, dim=-1)
-    cumulative_sums = sorted_values.cumsum(dim=-1)
-    previous_sums = F.pad(cumulative_sums, (1,-1), value=0.0)
-    lamp_sums = previous_sums + 2*sorted_values[:,-1:] 
-    cutoff_mask = lamp_sums < threshold
-
-    original_order_mask = torch.zeros_like(cutoff_mask).scatter_(
-        dim=-1,
-        index=sorted_indices,
-        src=cutoff_mask
-    )
-
-    return original_order_mask.view(original_shape)
 
 class LampAttention(nn.Module):
     def __init__(self, config):
@@ -72,6 +54,7 @@ class LampAttention(nn.Module):
         self.m_bits_value = config.m_bits_attn_value
         self.block_size_k = config.block_size_k
         self.tau = config.tau_softmax
+        self.relax_lamp = config.relax_lamp
         self.fake_lamp = config.fake_lamp
 
         self.register_buffer("bias", torch.tril(torch.ones(config.n_positions, config.n_positions))
@@ -103,7 +86,16 @@ class LampAttention(nn.Module):
         att = torch.softmax(scores, dim=-1)
 
         # Lamp section begins
-        lamp_mask = get_lamp_softmax_mask(att, 2-self.tau)
+        if self.relax_lamp:
+            scores_times_exp_scores = torch.abs(scores) * torch.exp(scores)
+            scores_times_exp_scores = torch.nan_to_num(scores_times_exp_scores, nan=0)
+            stes_maxs = scores_times_exp_scores.max(dim=-1, keepdim=True)[0]
+            lamp_mask = scores_times_exp_scores > self.tau * stes_maxs
+        else:
+            variance_times_scores = 2 * att * (1 - att) * torch.abs(scores)
+            variance_times_scores = torch.nan_to_num(variance_times_scores, nan=0)
+            lamp_mask = variance_times_scores > self.tau
+
         if self.fake_lamp:
             # Scatter the True values randomly in each row
             mask_shape = lamp_mask.shape

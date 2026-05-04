@@ -6,7 +6,7 @@ import itertools
 from tqdm import tqdm
 
 from token_provider import *
-from experiment_helper import *
+from exp_helper import *
 from weight_loader import get_gpt2_files
 from gpt2_pretrained import load_pretrained_gpt2
 from gpt2_lamp import LampGPT2Config, LampGPT2Model
@@ -30,21 +30,27 @@ def one_lamp_softmax_experiment(ref_model, test_model, m_bits_attn_score, tau_so
  
     return kl, fr, sp
 
-def many_lamp_softmax_experiments(seed, model_type, weights_dir, split, shuffle, fake_lamp):
+def many_lamp_softmax_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp):
     set_seed(seed)
     print(f"TF32 Allowed: {torch.backends.cuda.matmul.allow_tf32}")
 
     ref_model = load_pretrained_gpt2(model_type, weights_dir).cuda().eval()
     ref_config = ref_model.config
     
-    test_config = LampGPT2Config.from_vanilla(ref_config, fake_lamp=fake_lamp)
+    test_config = LampGPT2Config.from_vanilla(
+            ref_config,
+            relax_lamp=relax_lamp,
+            fake_lamp=fake_lamp
+    )
     test_model = LampGPT2Model(test_config).cuda().eval()
     test_model.load_state_dict(ref_model.state_dict())
 
-    nbatches = 200 
+    m_bits_range = [4, 7, 10, 13, 16, 19, 22]
+    if relax_lamp:
+        tau_range = [9e-1, 3e-1, 9e-2, 3e-2, 9e-3, 3e-3, 9e-4, 3e-4, 9e-5]
+    else:
+        tau_range = [1e-3, 5e-3, 1e-2, 5e-2, 1e-1, 5e-1, 1e0, 2e0, 5e0, 1e1, 2e1, 5e1]
 
-    m_bits_range = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22]
-    tau_range = [2.0, 1.9, 1.8, 1.7, 1.6, 1.5, 1.4, 1.3, 1.2, 1.1, 1.08, 1.06, 1.04, 1.02]
     dataset_names = ["OpenWebText", "CodeParrot", "ArXiv Science"]
 
     grid = list(itertools.product(dataset_names, m_bits_range, tau_range))
@@ -58,7 +64,7 @@ def many_lamp_softmax_experiments(seed, model_type, weights_dir, split, shuffle,
             token_provider = TokenFromTextProvider(
                     dataset,
                     batch_size=1,
-                    seq_len=1024,
+                    seq_len=seq_len,
                     shuffle_tokens=shuffle,
                     text_column_name=text_column_name
             )
@@ -76,9 +82,11 @@ def many_lamp_softmax_experiments(seed, model_type, weights_dir, split, shuffle,
                         'model': model_type,
                         'seed': seed,
                         'nbatches': nbatches,
+                        'seq_len': seq_len,
                         'dataset': dataset_name,
                         'split': split,
                         'shuffle': shuffle,
+                        'relax_lamp': relax_lamp,
                         'fake_lamp': fake_lamp,
                         'm_bits': m_bits,
                         'tau': tau,
@@ -92,9 +100,11 @@ def many_lamp_softmax_experiments(seed, model_type, weights_dir, split, shuffle,
                         'model': model_type,
                         'seed': seed,
                         'nbatches': nbatches,
+                        'seq_len': seq_len,
                         'dataset': dataset_name,
                         'split': split,
                         'shuffle': shuffle,
+                        'relax_lamp': relax_lamp,
                         'fake_lamp': fake_lamp,
                         'm_bits': m_bits,
                         'tau': tau,
@@ -107,24 +117,21 @@ def many_lamp_softmax_experiments(seed, model_type, weights_dir, split, shuffle,
 
     pbar.close()
     df = pd.DataFrame(results)
-    filename = f"lamp_softmax_{model_type}_{seed}s_{nbatches}nb.csv"
+    filename = f"lamp_metric_{model_type}_{seed}s_{nbatches}nb.csv"
     file_exists = os.path.isfile(filename)
-    df.to_csv(filename, mode='a', header=not file_exists, index=False)
+    df.to_csv(filename, mode='a', header=not file_exists, index=False, float_format='%.4e')
     print(f"Results saved to {filename}.")
     return df
 
 if __name__ == "__main__":
-    seed = 42  
-    model_type = "gpt2"
+    seed = 42
+    nbatches = 100
+    seq_len = 1024
+    model_type = sys.argv[1]
     split = "train"
     weights_dir = get_gpt2_files(model_type, ".")
-
-    shuffle = False
-    fake_lamp = False
-    df = many_lamp_softmax_experiments(seed, model_type, weights_dir, split, shuffle, fake_lamp)
-    fake_lamp = True
-    df = many_lamp_softmax_experiments(seed, model_type, weights_dir, split, shuffle, fake_lamp)
-
-    shuffle = True
-    fake_lamp = False
-    df = many_lamp_softmax_experiments(seed, model_type, weights_dir, split, shuffle, fake_lamp)
+ 
+    for shuffle in [False, True]:
+        for relax_lamp in [False, True]:
+            for fake_lamp in [False, True]:   
+                df = many_lamp_softmax_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp)
