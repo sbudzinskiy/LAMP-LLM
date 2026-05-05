@@ -11,7 +11,7 @@ from weight_loader import get_gpt2_files
 from gpt2_pretrained import load_pretrained_gpt2
 from gpt2_lamp import LampGPT2Config, LampGPT2Model
 
-def one_lamp_softmax_experiment(ref_model, test_model, m_bits_attn_score, tau_softmax, token_provider, nbatches, use_pbar):
+def one_lamp_metrics_experiment(ref_model, test_model, m_bits_attn_score, tau_softmax, token_provider, nbatches, use_pbar):
     reset_model_lamp(test_model)
     update_model_lamp(test_model, 'tau_softmax', tau_softmax)
 
@@ -30,7 +30,7 @@ def one_lamp_softmax_experiment(ref_model, test_model, m_bits_attn_score, tau_so
  
     return kl, fr, sp
 
-def many_lamp_softmax_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp):
+def many_lamp_mertics_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp):
     set_seed(seed)
     print(f"TF32 Allowed: {torch.backends.cuda.matmul.allow_tf32}")
 
@@ -76,7 +76,7 @@ def many_lamp_softmax_experiments(seed, nbatches, seq_len, model_type, weights_d
             for m_bits in m_bits_range:
                 pbar.set_description(f"DS {dataset_name} | Bits {m_bits} | Thresh {tau:.2f}")
                 try:
-                    kl, fr, sp = one_lamp_softmax_experiment(ref_model, test_model, m_bits, tau, token_provider, nbatches, False)
+                    kl, fr, sp = one_lamp_metrics_experiment(ref_model, test_model, m_bits, tau, token_provider, nbatches, False)
                     pbar.update(1)
                     results.append({
                         'model': model_type,
@@ -117,7 +117,7 @@ def many_lamp_softmax_experiments(seed, nbatches, seq_len, model_type, weights_d
 
     pbar.close()
     df = pd.DataFrame(results)
-    filename = f"lamp_metric_{model_type}_{seed}s_{nbatches}nb.csv"
+    filename = f"lamp_metrics_{model_type}_{seed}s_{nbatches}nb.csv"
     file_exists = os.path.isfile(filename)
     df.to_csv(filename, mode='a', header=not file_exists, index=False, float_format='%.4e')
     print(f"Results saved to {filename}.")
@@ -134,4 +134,4 @@ if __name__ == "__main__":
     for shuffle in [False, True]:
         for relax_lamp in [False, True]:
             for fake_lamp in [False, True]:   
-                df = many_lamp_softmax_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp)
+                df = many_lamp_metrics_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp)

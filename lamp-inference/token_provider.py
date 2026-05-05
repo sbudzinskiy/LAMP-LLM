@@ -110,6 +110,58 @@ class TokenFromTextProvider(TokenProvider):
 
 # ---------------------------------------------------------------------------------------------------------------------------
 
+class MultipleChoiceProvider:
+    def __init__(self, dataset, tokenizer_name="gpt2", seq_len=128, device='cuda'):
+        self.dataset = dataset
+        self.enc = tiktoken.get_encoding(tokenizer_name)
+        self.seq_len = seq_len
+        self.items = []
+        
+        for row in self.dataset:
+            # Handle dataset-specific column names
+            if 'goal' in row: # PIQA
+                ctx, choices, label = row['goal'], [row['sol1'], row['sol2']], int(row['label'])
+            elif 'ctx' in row: # HellaSwag
+                ctx, choices, label = row['ctx'], row['endings'], int(row['label'])
+            elif 'answerKey' in row: # ARC or OpenBookQA
+                ctx = row.get('question', row.get('question_stem'))
+                choices = row['choices']['text']
+                label_map = {str(k): i for i, k in enumerate(row['choices']['label'])}
+                label = label_map[str(row['answerKey'])]
+            else:
+                continue
+
+            ctx_toks = self.enc.encode(ctx)
+            processed_choices = []
+            
+            for choice in choices:
+                cont_toks = self.enc.encode(" " + choice) # Leading space for natural continuation
+                
+                # Truncate context if it exceeds max length
+                if len(ctx_toks) + len(cont_toks) > self.seq_len:
+                    safe_ctx_toks = ctx_toks[-(self.seq_len - len(cont_toks)):]
+                else:
+                    safe_ctx_toks = ctx_toks
+                    
+                processed_choices.append({
+                    'input_ids': safe_ctx_toks + cont_toks,
+                    'cont_len': len(cont_toks),
+                    'cont_toks': cont_toks
+                })
+
+            self.items.append({
+                'choices': processed_choices,
+                'label': label
+            })
+
+    def __len__(self):
+        return len(self.items)
+
+    def __iter__(self):
+        return iter(self.items)
+
+# ---------------------------------------------------------------------------------------------------------------------------
+
 DATASET_CONFIGS = {
     "TinyShakespeare": ("Trelis/tiny-shakespeare", None, "Text"),
     "OpenWebText": ("Skylion007/openwebtext", None, "text"),
@@ -123,12 +175,17 @@ DATASET_CONFIGS = {
     "Alpaca Cleaned": ("yahma/alpaca-cleaned", None, "output"),
     "Medical PubMed": ("medalpaca/medical_meadow_pubmed_causal", None, "input"),
     "Yelp Reviews": ("yelp_review_full", None, "text"),
+    "WikiText-2": ("wikitext", "wikitext-2-raw-v1", "text"),
+    "PIQA": ("lighteval/piqa", "plain_text", "goal"),
+    "HellaSwag": ("Rowan/hellaswag", "default", "ctx"),
+    "ARC-Easy": ("allenai/ai2_arc", "ARC-Easy", "question"),
+    "OpenBookQA": ("allenai/openbookqa", "main", "question_stem"),
 }
 
 def stream_dataset_from_config(dataset_name, split="train"):
     hf_id, subset, text_column_name = DATASET_CONFIGS[dataset_name]
     if subset is None:
-        ds = load_dataset(hf_id, split=split, streaming=True) 
+        ds = load_dataset(hf_id, split=split, streaming=True)
     else:
         ds = load_dataset(hf_id, subset, split=split, streaming=True)
 

@@ -41,7 +41,7 @@ def reset_model_precision(model, default_bits=23):
     for t in targets:
         update_model_precision(model, t, default_bits)
 
-def reset_model_lamp(model, default_tau=2.0):
+def reset_model_lamp(model, default_tau=1.0):
     targets = ['tau_softmax', 'tau_activation']
     for t in targets:
         update_model_lamp(model, t, default_tau)
@@ -81,7 +81,7 @@ def compute_average_metrics(ref_model, test_model, token_provider, max_batches, 
     count = 0
 
     if use_pbar:
-        pbar = tqdm(total=max_batches, desc="Evaluating")
+        pbar = tqdm(total=max_batches, desc="Evaluating Metrics")
 
     for _ in range(max_batches):
         tokens = token_provider.get_batch()
@@ -102,3 +102,59 @@ def compute_average_metrics(ref_model, test_model, token_provider, max_batches, 
         pbar.close()
 
     return total_kl / count, total_fr / count
+
+def compute_perplexity(model, token_provider, max_batches, use_pbar=True):
+    total_loss = 0.0
+    count = 0
+
+    if use_pbar:
+        pbar = tqdm(total=max_batches, desc="Evaluating Perplexity")
+
+    for _ in range(max_batches):
+        tokens = token_provider.get_batch()
+
+        with torch.no_grad():
+            logits = model(tokens)
+
+        loss = compute_loss(logits, tokens)
+        total_loss += loss.item()
+        count += 1
+        
+        if use_pbar:
+            pbar.update(1)
+            pbar.set_postfix({'PPL': f"{np.exp(total_loss/count):.3f}"})
+    
+    if use_pbar:
+        pbar.close()
+
+    return np.exp(total_loss / count)
+
+def compute_choice_accuracy(model, choice_provider):
+    correct = 0
+    total = 0
+    device = next(model.parameters()).device
+
+    for item in choice_provider:
+        lps = []
+        for choice in item['choices']:
+            # Move lists to GPU tensors just in time for the forward pass
+            input_ids = torch.tensor([choice['input_ids']], device=device)
+            shift_labels = torch.tensor(choice['cont_toks'], device=device)
+            cont_len = choice['cont_len']
+
+            with torch.no_grad():
+                logits = model(input_ids)
+
+            # Isolate the log probabilities of the continuation tokens
+            shift_logits = logits[0, -cont_len-1:-1, :]
+            log_probs = F.log_softmax(shift_logits, dim=-1)
+            token_log_probs = log_probs.gather(1, shift_labels.unsqueeze(-1)).squeeze(-1)
+
+            lps.append(token_log_probs.sum().item())
+
+        pred = lps.index(max(lps))
+        if pred == item['label']:
+            correct += 1
+        total += 1
+
+    return correct / total if total > 0 else 0

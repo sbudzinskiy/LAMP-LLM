@@ -12,6 +12,7 @@ class LampGPT2Config(LowPrecGPT2Config):
     tau_activation: float = 1.0
     tau_softmax: float = 1.0
     relax_lamp: bool = False
+    length_lamp: bool = False
     fake_lamp: bool = False
     sparsity_logs: list[float] = field(default_factory=list)
 
@@ -55,6 +56,7 @@ class LampAttention(nn.Module):
         self.block_size_k = config.block_size_k
         self.tau = config.tau_softmax
         self.relax_lamp = config.relax_lamp
+        self.length_lamp = config.length_lamp
         self.fake_lamp = config.fake_lamp
 
         self.register_buffer("bias", torch.tril(torch.ones(config.n_positions, config.n_positions))
@@ -86,15 +88,24 @@ class LampAttention(nn.Module):
         att = torch.softmax(scores, dim=-1)
 
         # Lamp section begins
+        if self.length_lamp:
+            # Normalize by row length
+            seq_len = att.size(-1)
+            row_lengths = torch.arange(1, seq_len + 1, device=att.device).view(1, 1, seq_len, 1)
+            tau = self.tau * torch.sqrt(1024 / row_lengths)
+            tau = torch.clamp(tau, max=1.0)
+        else:
+            tau = self.tau
+
         if self.relax_lamp:
             scores_times_exp_scores = torch.abs(scores) * torch.exp(scores)
             scores_times_exp_scores = torch.nan_to_num(scores_times_exp_scores, nan=0)
             stes_maxs = scores_times_exp_scores.max(dim=-1, keepdim=True)[0]
-            lamp_mask = scores_times_exp_scores > self.tau * stes_maxs
+            lamp_mask = scores_times_exp_scores > tau * stes_maxs
         else:
             variance_times_scores = 2 * att * (1 - att) * torch.abs(scores)
             variance_times_scores = torch.nan_to_num(variance_times_scores, nan=0)
-            lamp_mask = variance_times_scores > self.tau
+            lamp_mask = variance_times_scores > tau
 
         if self.fake_lamp:
             # Scatter the True values randomly in each row
