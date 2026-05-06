@@ -65,7 +65,6 @@ def many_lamp_downstream_experiments(seed, nbatches, seq_len, model_type, weight
     }
 
     datasets_accuracy = {
-        "PIQA": "validation"
     }
 
     # Perplexity experiments
