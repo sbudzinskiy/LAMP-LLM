@@ -59,8 +59,8 @@ def compute_loss(logits, inputs):
     return loss
 
 def compute_metrics(ref_logits, test_logits):
-    ref_flat = ref_logits.view(-1, ref_logits.size(-1))
-    test_flat = test_logits.view(-1, test_logits.size(-1))
+    ref_flat = ref_logits.view(-1, ref_logits.size(-1)).double()
+    test_flat = test_logits.view(-1, test_logits.size(-1)).double()
 
     kl = F.kl_div(
         F.log_softmax(test_flat, dim=-1),
