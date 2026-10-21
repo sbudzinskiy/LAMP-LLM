@@ -30,7 +30,7 @@ def one_lamp_metrics_experiment(ref_model, test_model, m_bits_attn_score, tau_so
  
     return kl, fr, sp
 
-def many_lamp_mertics_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp):
+def many_lamp_metrics_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp):
     set_seed(seed)
     print(f"TF32 Allowed: {torch.backends.cuda.matmul.allow_tf32}")
 
@@ -126,12 +126,11 @@ def many_lamp_mertics_experiments(seed, nbatches, seq_len, model_type, weights_d
 if __name__ == "__main__":
     seed = 42
     nbatches = 100
-    seq_len = 1024
     model_type = sys.argv[1]
+    seq_len = int(sys.argv[2])
     split = "train"
     weights_dir = get_gpt2_files(model_type, ".")
- 
-    for shuffle in [False, True]:
-        for relax_lamp in [False, True]:
-            for fake_lamp in [False, True]:   
-                df = many_lamp_metrics_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp)
+
+#    for shuffle, relax_lamp, fake_lamp in ([False,False,0], [False,False,1], [False,False,2], [False,True,0], [True,False,0]):
+    for shuffle, relax_lamp, fake_lamp in ([False,False,2],):
+        df = many_lamp_metrics_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp)
