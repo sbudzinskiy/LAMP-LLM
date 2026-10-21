@@ -13,7 +13,7 @@ class LampGPT2Config(LowPrecGPT2Config):
     tau_softmax: float = 1.0
     relax_lamp: bool = False
     length_lamp: bool = False
-    fake_lamp: bool = False
+    fake_lamp: int = 0
     sparsity_logs: list[float] = field(default_factory=list)
 
     @classmethod
@@ -107,13 +107,21 @@ class LampAttention(nn.Module):
             variance_times_scores = torch.nan_to_num(variance_times_scores, nan=0)
             lamp_mask = variance_times_scores > tau
 
-        if self.fake_lamp:
+        if self.fake_lamp == 1:
             # Scatter the True values randomly in each row
             mask_shape = lamp_mask.shape
             flat_shape = lamp_mask.view(-1, mask_shape[-1]).shape
             weights = torch.ones(flat_shape, device=lamp_mask.device)
             perm_indices = torch.multinomial(weights, num_samples=mask_shape[-1], replacement=False).view(mask_shape)
             lamp_mask = lamp_mask.gather(dim=-1, index=perm_indices)
+        elif self.fake_lamp == 2:
+            # Choose based on numerical instability of KQ products
+            scores_abs = torch.matmul(torch.abs(q), torch.abs(k_t)).div_(math.sqrt(self.head_dim))
+            stability_ratio = torch.abs(scores) / (scores_abs + 1e-10)
+            stability_ratio = stability_ratio.masked_fill(causal_mask == 0, float('inf'))
+            marked_per_row = lamp_mask.sum(dim=-1, keepdim=True)
+            ranks = torch.argsort(torch.argsort(stability_ratio, dim=-1), dim=-1)
+            lamp_mask = ranks < marked_per_row
 
         scores_hp = torch.matmul(q, k_t).div_(math.sqrt(self.head_dim))
         #   When using higher precision, but not full precision:
