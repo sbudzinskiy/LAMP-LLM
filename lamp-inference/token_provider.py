@@ -111,12 +111,16 @@ class TokenFromTextProvider(TokenProvider):
 # ---------------------------------------------------------------------------------------------------------------------------
 
 class MultipleChoiceProvider:
-    def __init__(self, dataset, tokenizer_name="gpt2", seq_len=128, device='cuda'):
+    def __init__(self, dataset, tokenizer_name="gpt2", seq_len=128, device='cuda', prepend_eot=False):
         self.dataset = dataset
         self.enc = tiktoken.get_encoding(tokenizer_name)
         self.seq_len = seq_len
+        self.prepend_eot = prepend_eot
+        self.eot_token = self.enc.eot_token
         self.items = []
         
+        sink_toks = [self.eot_token] if self.prepend_eot else []
+
         for row in self.dataset:
             # Handle dataset-specific column names
             if 'goal' in row: # PIQA
@@ -137,14 +141,16 @@ class MultipleChoiceProvider:
             for choice in choices:
                 cont_toks = self.enc.encode(" " + choice) # Leading space for natural continuation
                 
+                max_ctx_len = self.seq_len - len(cont_toks) - len(sink_toks)
+
                 # Truncate context if it exceeds max length
-                if len(ctx_toks) + len(cont_toks) > self.seq_len:
-                    safe_ctx_toks = ctx_toks[-(self.seq_len - len(cont_toks)):]
+                if len(ctx_toks) > max_ctx_len:
+                    safe_ctx_toks = ctx_toks[-max_ctx_len:] if max_ctx_len > 0 else []
                 else:
                     safe_ctx_toks = ctx_toks
                     
                 processed_choices.append({
-                    'input_ids': safe_ctx_toks + cont_toks,
+                    'input_ids': sink_toks + safe_ctx_toks + cont_toks,
                     'cont_len': len(cont_toks),
                     'cont_toks': cont_toks
                 })
