@@ -131,6 +131,5 @@ if __name__ == "__main__":
     split = "train"
     weights_dir = get_gpt2_files(model_type, ".")
 
-#    for shuffle, relax_lamp, fake_lamp in ([False,False,0], [False,False,1], [False,False,2], [False,True,0], [True,False,0]):
-    for shuffle, relax_lamp, fake_lamp in ([False,False,2],):
+    for shuffle, relax_lamp, fake_lamp in ([False,False,0], [False,False,1], [False,False,2], [False,True,0], [True,False,0]):
         df = many_lamp_metrics_experiments(seed, nbatches, seq_len, model_type, weights_dir, split, shuffle, relax_lamp, fake_lamp)
